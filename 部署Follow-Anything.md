@@ -63,9 +63,29 @@ python follow_anything.py --desired_height 240 --desired_width 320 --path_to_vid
 10.用无人机进行follow
 
 ```shell
-python follow_anything.py --desired_height 240 --desired_width 320 --save_images_to outputs/ --detect dino --tracker aot --queries_dir myquery --desired_feature 20 --plot_visualizations --fly_drone --use_sam --use_yaw
+python follow_anything.py --desired_height 240 --desired_width 320 --save_images_to outputs/ --detect dino --tracker aot --queries_dir myquery --desired_feature 20 --plot_visualizations --fly_drone --use_sam --use_yaw --use_datadrawer
 
 ```
+
+11.分成了两套代码，一套用于tello，为follow_anything_tello.py，另一套用于mini3pro，为follow_anything_mini.py
+
+12.添加了打印数据曲线的脚本
+
+首先启动follow_anything，会自动生成虚拟串口并且print到终端上
+
+```shell
+python follow_anything_tello.py --desired_height 240 --desired_width 320 --save_images_to outputs/ --detect dino --tracker aot --queries_dir myquery --desired_feature 20 --plot_visualizations --fly_drone --use_sam --use_yaw --use_datadrawer
+```
+
+<img src="Images_and_videos_for_Github_visualizations/2024-03-26_00-31.png" alt="2024-03-26_00-31" style="zoom:50%;" />
+
+看到其中有slave device names的数据，把其中的路径复制，然后可以启动dataDrawer文件夹中的drawer.py，并且设置串口号和显示通道的数量（6个以内）
+
+```shell
+python drawer.py --serial_port /dev/pts/5 --channel_num 3 --plot_mode gather
+```
+
+
 
 #### 2. python tello视频流抓取
 
