@@ -832,7 +832,7 @@ def track_object_with_aot(tracker, pred_mask, frame,  video, cfg, vehicle, track
             ##############################################
             vis_masks = multiclass_vis(pred_mask, frame, np.max(pred_mask) + 1, np_used = True) # visual masks 就是把mask用不同颜色显示在图片上
             t_e = time.time()
-            # print("FPS:",1/(t_e-t))
+            print("FPS:",1/(t_e-t))
             plot_and_save_if_neded(cfg, frame, "Stream_tracking",frame_idx) # 输出当前帧
             plot_and_save_if_neded(cfg, vis_masks, 'Tracker-result',frame_idx,multiply = 255) # 输出sam分割帧
             # print("processed frame {}, obj_num {}".format(frame_idx,tracker.get_obj_num()),end='\r')
