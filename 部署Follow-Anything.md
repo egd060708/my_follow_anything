@@ -85,7 +85,21 @@ python follow_anything_tello.py --desired_height 240 --desired_width 320 --save_
 python drawer.py --serial_port /dev/pts/5 --channel_num 3 --plot_mode gather
 ```
 
+13.webots实现follow_anything
 
+由于该项目存在仿真需求，因此需要从仿真软件中读取视频流进行识别，通过webots中的camera节点来保存摄像头图像定时刷新到指定路径，再由follow_anything读取相应路径的图像进行识别
+
+```shell
+python follow_anything_webots.py --desired_height 240 --desired_width 320 --save_images_to outputs/ --detect dino --tracker aot --queries_dir myquery --desired_feature 20 --plot_visualizations --fly_drone --use_sam --wait_key 20
+```
+
+可以通过输入参数指定抓取视频的路径
+
+```shell
+--img_filename ‘./update_frame/extern_video_frame.jpeg’
+```
+
+此处给出的是默认路径
 
 #### 2. python tello视频流抓取
 
