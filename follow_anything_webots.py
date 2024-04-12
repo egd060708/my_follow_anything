@@ -42,7 +42,7 @@ import math
 from pyqtgraph.Qt import QtCore, QtWidgets
 # import drawer
 
-import serialImage
+import send2webots
 import readimg
 
 
@@ -113,8 +113,10 @@ parser.add_argument('--text_query', default='', help='')
 parser.add_argument('--dont_allow_contours_mix', default = False, action='store_true', help='dont allow contours mix')
 parser.add_argument('--num_of_clicks_for_detection', default=3, type = float,  help='pred_iou_thresh for sam')
 parser.add_argument('--sort_by', default="area",  help='stability_score|area|predicted_iou')
-
+# 读取webots输出的图像地址
 parser.add_argument('--img_filename', default = './update_frame/extern_video_frame.jpeg', help = 'extern software update frame dir')
+# 发送状态量到webots的虚拟串口
+parser.add_argument('--serial_port', default="/dev/pts/4", type=str, help='Abstract serial slave discriptions')
 
 
 args = parser.parse_args()
@@ -470,7 +472,7 @@ def compute_area_and_center(bounding_shape):
    
     return area, center
 
-def track_object_with_siammask(siammask, detections, video, cfg, tracker_cfg, vehicle):
+def track_object_with_siammask(siammask, detections, video, cfg, tracker_cfg, vehicle, serial):
     x, y, w, h = detections[0]#todo
     print(x, y, w, h)
     toc = 0
@@ -724,7 +726,7 @@ def detect_by_click(sam , video, cfg, vehicle):
             return None, masks, frame 
 
 
-def compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle):
+def compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle, serial):
     # global postion_vector_queue # 位置向量队列
     x = 1
     y = 0
@@ -754,29 +756,31 @@ def compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle):
     direction_vector[y]*=-1
 
     # # 实时控制tello的高度和航向，跟随被识别物品
-    # if cfg['use_forward']: # 如果启用了前向跟随
-    #     forward_p = -(mean_length - 8000)
-    # else:
-    #     forward_p = 0
+    if cfg['use_forward']: # 如果启用了前向跟随
+        forward_p = -(mean_length - 5000)
+    else:
+        forward_p = 0
 
-    # if forward_p > 0:
-    #     forward_p = math.sqrt(forward_p)
-    # elif forward_p < 0:
-    #     forward_p = -math.sqrt(abs(forward_p))
-    # else:
-    #     forward_p = 0
+    if forward_p > 0:
+        forward_p = math.sqrt(forward_p)
+    elif forward_p < 0:
+        forward_p = -math.sqrt(abs(forward_p))
+    else:
+        forward_p = 0
     
-    # if cfg['use_yaw']:
-    #     yaw_p = direction_vector[x]
-    # else:
-    #     yaw_p = 0
+    if cfg['use_yaw']:
+        yaw_p = direction_vector[x]
+    else:
+        yaw_p = 0
         
-    # if cfg['use_height']:
-    #     height_p = direction_vector[y]
-    # else:
-    #     height_p = 0
+    if cfg['use_height']:
+        height_p = direction_vector[y]
+    else:
+        height_p = 0
+        
+    serial.send(yaw_p, height_p, forward_p, 0)
     
-    # print('position error: %lf , %lf, %lf' % (yaw_p, height_p, forward_p))
+    print('position error: %lf , %lf, %lf' % (yaw_p, height_p, forward_p))
     
     # vehicle.tello_ctrl(yaw_p,height_p,forward_p,200.0,90.0,0.15)
 
@@ -797,7 +801,7 @@ def compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle):
     #                                                    direction_vector[2],
     #                                                    K= 1.5, yaw_K = 0.15 ))
     
-def track_object_with_aot(tracker, pred_mask, frame,  video, cfg, vehicle, track_single_object = True):
+def track_object_with_aot(tracker, pred_mask, frame,  video, cfg, vehicle, serial, track_single_object = True):
     
     tracker.restart_tracker()
 
@@ -827,7 +831,7 @@ def track_object_with_aot(tracker, pred_mask, frame,  video, cfg, vehicle, track
             mean_point, mean_length = get_mean_point(pred_mask) # 返回平均点
             if mean_point is None and cfg['redetect_by']!= 'tracker': return "FAILED" # 检测失败
             
-            compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle) # 调整飞行器姿态
+            compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle, serial) # 调整飞行器姿态
            
             ##############################################
             vis_masks = multiclass_vis(pred_mask, frame, np.max(pred_mask) + 1, np_used = True) # visual masks 就是把mask用不同颜色显示在图片上
@@ -934,7 +938,7 @@ def detect_object(cfg, detector, segmentor, video, queries): # 目标检测
             masks_of_sam = None 
     return bounding_boxes, masks_of_sam, saved_frame
 
-def start_mission(device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle):
+def start_mission(device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle, serial):
     global mission_counter
     mission_counter +=1
 
@@ -948,15 +952,16 @@ def start_mission(device, tracker_cfg, cfg, tracker, detector, segmentor, querie
                                    detections=bounding_boxes, 
                                    video=video, cfg=cfg, 
                                    tracker_cfg =tracker_cfg, 
-                                   vehicle = vehicle)
+                                   vehicle = vehicle,
+                                   serial=serial)
     else:
         status = track_object_with_aot(tracker, masks, saved_frame,  
-                                       video, cfg, vehicle)
+                                       video, cfg, vehicle, serial)
         if status == 'FAILED': 
             print("Redtecting....")
             start_mission(device, tracker_cfg, cfg, tracker, 
                           detector, segmentor, queries, 
-                          video, vehicle)
+                          video, vehicle, serial)
             
     # video.root.mainloop() 
 
@@ -972,10 +977,12 @@ if __name__ == '__main__':
     image_queue = queue.Queue(1) # 抓取视频流队列
     FREQ = 0.5 # 低通滤波截止频率
     cof_b, cof_a = butter(6, FREQ, fs=17, btype='low') # 巴特沃斯滤波器
+    
+    serial = send2webots.serialWebots(args.serial_port)
 
     device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle = init_system()
     # vehicle.root.mainloop()
-    start_mission(device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle)
+    start_mission(device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle, serial)
     
 
  

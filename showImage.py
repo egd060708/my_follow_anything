@@ -37,7 +37,7 @@ import math
 from pyqtgraph.Qt import QtCore, QtWidgets
 # import drawer
 
-import serialImage
+import send2webots
 import readimg
 
 
