@@ -115,8 +115,12 @@ parser.add_argument('--num_of_clicks_for_detection', default=3, type = float,  h
 parser.add_argument('--sort_by', default="area",  help='stability_score|area|predicted_iou')
 # 读取webots输出的图像地址
 parser.add_argument('--img_filename', default = './update_frame/extern_video_frame.jpeg', help = 'extern software update frame dir')
+# 使用什么通信模式
+parser.add_argument('--com_mode', default='socket', help='Choose which mode to communicate')
 # 发送状态量到webots的虚拟串口
-parser.add_argument('--serial_port', default="/dev/pts/4", type=str, help='Abstract serial slave discriptions')
+parser.add_argument('--serial_port', default="/dev/pts/4", type=str, help='Abstract comPort slave discriptions')
+# 发送状态量到webots的socket网口
+parser.add_argument('--socket_port', default=7790, type=int, help='Abstract socket port id')
 
 
 args = parser.parse_args()
@@ -252,7 +256,7 @@ def get_dino_result_if_needed(cfg, frame, class_labels):
         return _overlay
         #plot_and_save_if_neded(cfg, _overlay, "DINO-result-only")
 
-def automatic_object_detection(vit_model, sam, video, queries, cfg, vehicle):
+def automatic_object_detection(vit_model, sam, video, queries, cfg, vehicle, comPort):
     count=0; detecton_count = 0
     detected = False
     cosine_similarity = torch.nn.CosineSimilarity(dim=1)  # (1, 512, H // 2, W // 2)
@@ -260,6 +264,7 @@ def automatic_object_detection(vit_model, sam, video, queries, cfg, vehicle):
         while not detected: #!and video.isOpened():
             s = time.time()
             read_one_frame = False
+            comPort.send(0,0,0,0,-1,-1)
             while not read_one_frame:
                 read_one_frame, frame = video.read()
                 # print('1 {} /n'.format(type(frame)))
@@ -472,7 +477,7 @@ def compute_area_and_center(bounding_shape):
    
     return area, center
 
-def track_object_with_siammask(siammask, detections, video, cfg, tracker_cfg, vehicle, serial):
+def track_object_with_siammask(siammask, detections, video, cfg, tracker_cfg, vehicle, comPort):
     x, y, w, h = detections[0]#todo
     print(x, y, w, h)
     toc = 0
@@ -648,8 +653,14 @@ def init_system():
     # drawerapp.setWindowTitle(u'System Loading')
     # drawerapp.show()
     # app.exec()
+    
+    print('init_comPort') # 对外通信
+    if args.com_mode == 'serial':
+        comPort = send2webots.serialWebots(args.serial_port)
+    elif args.com_mode == 'socket':
+        comPort = send2webots.socketWebots(args.socket_port)
 
-    return device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle
+    return device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle, comPort
 
 
 
@@ -726,7 +737,7 @@ def detect_by_click(sam , video, cfg, vehicle):
             return None, masks, frame 
 
 
-def compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle, serial):
+def compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle, comPort):
     # global postion_vector_queue # 位置向量队列
     x = 1
     y = 0
@@ -741,6 +752,7 @@ def compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle, s
         #                                                 0, 
         #                                                 K = 0, 
         #                                                 yaw_K = 0))
+        comPort.send(0, 0, 0, 0, -1, -1)
         return
     
     y_p = abs(cfg['desired_height'])/2 - mean_point[y] # 可以理解为视频中点跟目标平均点的位置差值
@@ -778,9 +790,9 @@ def compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle, s
     else:
         height_p = 0
         
-    serial.send(yaw_p, height_p, forward_p, 0)
+    comPort.send(yaw_p, height_p, forward_p, 0, float(mean_point[x]), float(mean_point[y]))
     
-    print('position error: %lf , %lf, %lf' % (yaw_p, height_p, forward_p))
+    print('position error: %lf , %lf, %lf, %lf, %lf' % (yaw_p, height_p, forward_p, float(mean_point[x]), float(mean_point[y])))
     
     # vehicle.tello_ctrl(yaw_p,height_p,forward_p,200.0,90.0,0.15)
 
@@ -801,7 +813,7 @@ def compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle, s
     #                                                    direction_vector[2],
     #                                                    K= 1.5, yaw_K = 0.15 ))
     
-def track_object_with_aot(tracker, pred_mask, frame,  video, cfg, vehicle, serial, track_single_object = True):
+def track_object_with_aot(tracker, pred_mask, frame,  video, cfg, vehicle, comPort, track_single_object = True):
     
     tracker.restart_tracker()
 
@@ -829,9 +841,11 @@ def track_object_with_aot(tracker, pred_mask, frame,  video, cfg, vehicle, seria
             ###############################################
 
             mean_point, mean_length = get_mean_point(pred_mask) # 返回平均点
-            if mean_point is None and cfg['redetect_by']!= 'tracker': return "FAILED" # 检测失败
+            if mean_point is None and cfg['redetect_by']!= 'tracker': 
+                comPort.send(0, 0, 0, 0, -1, -1)
+                return "FAILED" # 检测失败
             
-            compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle, serial) # 调整飞行器姿态
+            compute_drone_action_while_tracking(mean_point, mean_length, cfg, vehicle, comPort) # 调整飞行器姿态
            
             ##############################################
             vis_masks = multiclass_vis(pred_mask, frame, np.max(pred_mask) + 1, np_used = True) # visual masks 就是把mask用不同颜色显示在图片上
@@ -914,12 +928,12 @@ def detect_by_box(sam , video, cfg, vehicle):
  
         #drone_action_wrapper_while_detecting(vehicle,cfg)
 
-def detect_object(cfg, detector, segmentor, video, queries): # 目标检测
+def detect_object(cfg, detector, segmentor, video, queries, comPort): # 目标检测
     print("aplying {} detection...".format(cfg['detect']))
     if cfg['detect'] in ['dino', 'clip']:
         bounding_boxes, masks_of_sam, saved_frame = automatic_object_detection(vit_model=detector, sam = segmentor, 
                                                                                video=video, queries=queries, 
-                                                                               cfg=cfg, vehicle=vehicle)
+                                                                               cfg=cfg, vehicle=vehicle, comPort=comPort)
         vis_masks = multiclass_vis(masks_of_sam, saved_frame, np.max(masks_of_sam) + 1, np_used = True, alpha =1)
         #plot_and_save_if_neded(cfg, vis_masks, 'Tracker-result')
     else:
@@ -938,14 +952,16 @@ def detect_object(cfg, detector, segmentor, video, queries): # 目标检测
             masks_of_sam = None 
     return bounding_boxes, masks_of_sam, saved_frame
 
-def start_mission(device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle, serial):
+def start_mission(device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle, comPort):
     global mission_counter
     mission_counter +=1
 
     if mission_counter > 1 and cfg['redetect_by'] in ['dino','clip']:
         cfg['detect'] = cfg['redetect_by']
 
-    bounding_boxes, masks, saved_frame = detect_object(cfg, detector, segmentor, video, queries)
+    bounding_boxes, masks, saved_frame = detect_object(cfg, detector, segmentor, video, queries, comPort)
+    
+    comPort.send(0, 0, 0, 0, -1, -1)
     
     if cfg['tracker'] == "siammask":
         track_object_with_siammask(siammask=tracker, 
@@ -953,15 +969,15 @@ def start_mission(device, tracker_cfg, cfg, tracker, detector, segmentor, querie
                                    video=video, cfg=cfg, 
                                    tracker_cfg =tracker_cfg, 
                                    vehicle = vehicle,
-                                   serial=serial)
+                                   comPort=comPort)
     else:
         status = track_object_with_aot(tracker, masks, saved_frame,  
-                                       video, cfg, vehicle, serial)
+                                       video, cfg, vehicle, comPort)
         if status == 'FAILED': 
             print("Redtecting....")
             start_mission(device, tracker_cfg, cfg, tracker, 
                           detector, segmentor, queries, 
-                          video, vehicle, serial)
+                          video, vehicle, comPort)
             
     # video.root.mainloop() 
 
@@ -977,12 +993,10 @@ if __name__ == '__main__':
     image_queue = queue.Queue(1) # 抓取视频流队列
     FREQ = 0.5 # 低通滤波截止频率
     cof_b, cof_a = butter(6, FREQ, fs=17, btype='low') # 巴特沃斯滤波器
-    
-    serial = send2webots.serialWebots(args.serial_port)
 
-    device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle = init_system()
+    device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle, comPort = init_system()
     # vehicle.root.mainloop()
-    start_mission(device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle, serial)
+    start_mission(device, tracker_cfg, cfg, tracker, detector, segmentor, queries, video, vehicle, comPort)
     
 
  
