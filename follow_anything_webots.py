@@ -114,7 +114,7 @@ parser.add_argument('--dont_allow_contours_mix', default = False, action='store_
 parser.add_argument('--num_of_clicks_for_detection', default=3, type = float,  help='pred_iou_thresh for sam')
 parser.add_argument('--sort_by', default="area",  help='stability_score|area|predicted_iou')
 # 读取webots输出的图像地址
-parser.add_argument('--img_filename', default = './update_frame/extern_video_frame.jpeg', help = 'extern software update frame dir')
+parser.add_argument('--img_filename', default = '/home/lu/Git_Project/github/webots_autodriving_drone/traffic_project_bridge/cache/DEMO_VideoFrame.jpeg', help = 'extern software update frame dir')
 # 使用什么通信模式
 parser.add_argument('--com_mode', default='socket', help='Choose which mode to communicate')
 # 发送状态量到webots的虚拟串口
